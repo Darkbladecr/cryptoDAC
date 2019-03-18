@@ -10,7 +10,7 @@ import (
 func init() {
 	err := godotenv.Load()
 	if err != nil {
-		panic("Error loading .env file")
+		println("Error loading .env file")
 	}
 }
 
