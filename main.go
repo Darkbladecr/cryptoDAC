@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+	"os"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -10,11 +12,15 @@ import (
 func init() {
 	err := godotenv.Load()
 	if err != nil {
-		println("Error loading .env file")
+		log.Println("Error loading .env file")
 	}
+	goEnv = os.Getenv("GO_ENV")
+	exit = false
 }
 
 var (
+	goEnv           string
+	exit            bool
 	messages        chan string
 	limitOrderTimer *time.Timer
 	orderExpiry     time.Duration
@@ -26,22 +32,43 @@ func main() {
 	orderExpiry = 5 * time.Minute
 	orderInterval = GetOrderInterval()
 	client := coinbasepro.NewClient()
-	defer client.CancelAllOrders()
+	defer func() {
+		msg, err := client.CancelAllOrders()
+		if err != nil {
+			log.Println(err.Error())
+		}
+		log.Println(msg)
+	}()
 	go Websocket(client)
 
-	ticker := time.NewTimer(time.Second)
+	ticker := time.NewTimer(orderInterval)
 	go func() {
-		println("ticker loaded")
 		for {
 			<-ticker.C
+			orderInterval = GetOrderInterval()
 			ticker.Reset(GetOrderInterval())
-			println("ticker done")
-			LoopOrder(client)
-			Withdraw(client)
+			err := LoopOrder(client)
+			if err != nil {
+				log.Println(err.Error())
+				exit = true
+				return
+			}
+			err = Withdraw(client)
+			if err != nil {
+				log.Println(err.Error())
+				exit = true
+				return
+			}
 		}
 	}()
 
 	for {
-		println(<-messages)
+		if exit {
+			log.Println("Closing server.")
+			return
+		}
+		if goEnv != "PRODUCTION" {
+			log.Println(<-messages)
+		}
 	}
 }

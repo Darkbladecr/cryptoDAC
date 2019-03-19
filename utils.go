@@ -2,14 +2,14 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"time"
 )
 
 // Pprint will pretty print any json/interface
 func Pprint(v interface{}) {
 	if msg, err := json.MarshalIndent(v, "", "  "); err != nil {
-		panic(err)
+		log.Println(err.Error())
 	} else {
 		println(string(msg))
 	}
@@ -20,6 +20,6 @@ func GetOrderInterval() time.Duration {
 	now := time.Now()
 	monthly := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	next := monthly.AddDate(0, 1, 0)
-	fmt.Printf("Next order: %s", next.String())
+	log.Printf("Next order set for: %s\n", next.String())
 	return next.Sub(now)
 }

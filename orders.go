@@ -1,7 +1,8 @@
 package main
 
 import (
-	"fmt"
+	"errors"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -11,38 +12,39 @@ import (
 )
 
 // GetAccount loads all accounts and returns the currency queried
-func GetAccount(c *coinbasepro.Client, currency string) coinbasepro.Account {
+func GetAccount(c *coinbasepro.Client, currency string) (coinbasepro.Account, error) {
+	var account coinbasepro.Account
 	accounts, err := c.GetAccounts()
 	if err != nil {
-		panic(err)
+		return account, err
 	}
 	for _, a := range accounts {
 		if a.Currency == currency {
-			return a
+			return a, nil
 		}
 	}
-	panic("No account for " + currency)
+	return account, errors.New("No account for " + currency)
 }
 
 // limitOrder sends a limit order based on the amount of funds available in your account or
 // otherwise the minimum of 0.001 BTC
-func limitOrder(c *coinbasepro.Client) coinbasepro.Order {
+func limitOrder(c *coinbasepro.Client) (coinbasepro.Order, error) {
 	var order coinbasepro.Order
 	productID := os.Getenv("PRODUCT_ID")
 	productIDs := strings.Split(productID, "-")
 	fiat := productIDs[1]
 	book, err := c.GetBook(productID, 1)
 	if err != nil {
-		panic(err)
+		return order, err
 	}
 
 	lastPrice, err := decimal.NewFromString(book.Bids[0].Price)
 	if err != nil {
-		panic(err)
+		return order, err
 	}
 	buyAmount, err := decimal.NewFromString(os.Getenv("BUY_AMOUNT"))
 	if err != nil {
-		panic(err)
+		return order, err
 	}
 	size := "0.001"
 	if buyAmount.Div(lastPrice).GreaterThan(decimal.NewFromFloat(0.001)) {
@@ -50,16 +52,20 @@ func limitOrder(c *coinbasepro.Client) coinbasepro.Order {
 	}
 	sizePrecise, err := decimal.NewFromString(size)
 	if err != nil {
-		panic(err)
+		return order, err
 	}
 
-	account := GetAccount(c, fiat)
+	account, err := GetAccount(c, fiat)
+	if err != nil {
+		return order, err
+	}
 	available, err := decimal.NewFromString(account.Available)
 	if err != nil {
-		panic(err)
+		return order, err
 	}
 	if sizePrecise.Mul(lastPrice).GreaterThan(available) {
-		panic("Not enough funds available")
+		log.Printf("Not enough funds available. You need %s more.", sizePrecise.Mul(lastPrice).Sub(available).StringFixed(2))
+		return order, nil
 	}
 
 	orderOpts := coinbasepro.Order{
@@ -73,49 +79,63 @@ func limitOrder(c *coinbasepro.Client) coinbasepro.Order {
 
 	order, err = c.CreateOrder(&orderOpts)
 	if err != nil {
-		panic(err)
+		return order, err
 	}
-	return order
+	return order, nil
 }
 
 //LoopOrder creates a limit order and if it is not filled within the orderExpiry time
 //then a new order will be set at the top bid of the orderbook
-func LoopOrder(c *coinbasepro.Client) bool {
-	order := limitOrder(c)
-	println("order placed")
+func LoopOrder(c *coinbasepro.Client) error {
+	order, err := limitOrder(c)
+	if err != nil {
+		return err
+	}
+	if order.ID != "" {
+		log.Printf("Order %s placed.", order.ID)
+	}
 	limitOrderTimer = time.NewTimer(orderExpiry)
 	<-limitOrderTimer.C
-	order, err := c.GetOrder(order.ID)
+	order, err = c.GetOrder(order.ID)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	if !order.Settled {
-		err = c.CancelOrder(order.ID)
-		if err != nil {
-			panic(err)
+		if order.ID != "" {
+			err = c.CancelOrder(order.ID)
+			if err != nil {
+				return err
+			}
+			log.Printf("Order %s expired.", order.ID)
 		}
-		println("order expired")
 		return LoopOrder(c)
 	}
-	println("order settled")
-	return true
+	if order.ID != "" {
+		log.Printf("Order %s settled.", order.ID)
+	}
+	return nil
 }
 
 // Withdraw withdraws all your selected crypto into the $COLD_WALLET
-func Withdraw(c *coinbasepro.Client) {
+func Withdraw(c *coinbasepro.Client) error {
 	productID := os.Getenv("PRODUCT_ID")
 	productIDs := strings.Split(productID, "-")
 	coin := productIDs[0]
-	account := GetAccount(c, coin)
+	account, err := GetAccount(c, coin)
+	if err != nil {
+		return err
+	}
 	withdrawOpts := coinbasepro.WithdrawalCrypto{
 		Currency: coin,
 		Amount:   account.Available,
 		// Amount:        "0.001",
 		CryptoAddress: os.Getenv("COLD_WALLET"),
 	}
-	_, err := c.CreateWithdrawalCrypto(&withdrawOpts)
+	_, err = c.CreateWithdrawalCrypto(&withdrawOpts)
 	if err != nil {
-		panic(err)
+		log.Println("Error with withdrawal.")
+		log.Println(err.Error())
 	}
-	fmt.Printf("Withdrew %s %s", account.Available, coin)
+	log.Printf("Withdrew %s %s.", account.Available, coin)
+	return nil
 }
