@@ -86,7 +86,7 @@ func limitOrder(c *coinbasepro.Client) (coinbasepro.Order, error) {
 
 //LoopOrder creates a limit order and if it is not filled within the orderExpiry time
 //then a new order will be set at the top bid of the orderbook
-func LoopOrder(c *coinbasepro.Client) error {
+func LoopOrder(c *coinbasepro.Client, orderExpiry time.Duration) error {
 	order, err := limitOrder(c)
 	if err != nil {
 		return err
@@ -108,7 +108,7 @@ func LoopOrder(c *coinbasepro.Client) error {
 			}
 			log.Printf("Order %s expired.", order.ID)
 		}
-		return LoopOrder(c)
+		return LoopOrder(c, orderExpiry)
 	}
 	if order.ID != "" {
 		log.Printf("Order %s settled.", order.ID)

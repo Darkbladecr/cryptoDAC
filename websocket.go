@@ -1,10 +1,9 @@
 package main
 
 import (
-	"encoding/json"
+	"fmt"
 	"log"
 	"os"
-	"time"
 
 	ws "github.com/gorilla/websocket"
 	coinbasepro "github.com/preichenberger/go-coinbasepro/v2"
@@ -21,6 +20,8 @@ func init() {
 
 //Websocket connects to coinbase's stream to watch order flow
 func Websocket(c *coinbasepro.Client) {
+	log.Printf("Starting stream on %s", wssURI)
+
 	var wsDialer ws.Dialer
 	wsConn, _, err := wsDialer.Dial(wssURI, nil)
 	if err != nil {
@@ -39,7 +40,10 @@ func Websocket(c *coinbasepro.Client) {
 			},
 		},
 	}
-	signedMessage, err := message.Sign(os.Getenv("COINBASE_PRO_SECRET"), os.Getenv("COINBASE_PRO_KEY"), os.Getenv("COINBASE_PRO_PASSPHRASE"))
+	signedMessage, err := message.Sign(
+		os.Getenv("COINBASE_PRO_SECRET"),
+		os.Getenv("COINBASE_PRO_KEY"),
+		os.Getenv("COINBASE_PRO_PASSPHRASE"))
 	if err != nil {
 		log.Println(err.Error())
 	}
@@ -47,9 +51,7 @@ func Websocket(c *coinbasepro.Client) {
 		log.Println(err.Error())
 	}
 
-	messages <- "Starting stream on " + wssURI
-
-	for true {
+	for {
 		if exit {
 			return
 		}
@@ -58,18 +60,13 @@ func Websocket(c *coinbasepro.Client) {
 			log.Println(err.Error())
 			return
 		}
-		if message.Type != "heartbeat" {
-			if msg, err := json.MarshalIndent(message, "", "  "); err != nil {
-				log.Println(err.Error())
-			} else if goEnv != "PRODUCTION" {
-				messages <- string(msg)
-			}
-			if message.Reason == "filled" {
-				limitOrderTimer.Reset(orderExpiry)
-				if message.RemainingSize == "0.00000000" {
-					limitOrderTimer.Reset(2 * time.Second)
-				}
-			}
+		if message.Type == "heartbeat" {
+			time := message.Time.Time()
+			heartbeat <- fmt.Sprintf("Ping %s @ %s",
+				message.ProductID,
+				time.Format("2006-01-02 15:04:05"))
+		} else if message.Type != "subscriptions" {
+			messages <- message
 		}
 	}
 }
